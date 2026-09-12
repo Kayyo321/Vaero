@@ -611,9 +611,10 @@ fn read_phrase_text(source: &PhraseSource) -> std::io::Result<String> {
 /// Write the recovery phrase to a new file that must not already exist.
 ///
 /// On Windows, the file is created empty and its inherited DACL entries are
-/// removed before any phrase bytes are written. Only the current user's SID
-/// is then granted full access. If applying that ACL fails, the empty file is
-/// removed and no phrase material is persisted.
+/// removed before any phrase bytes are written. The current user's SID is then
+/// granted full access; Windows-managed explicit SYSTEM or Administrators ACEs
+/// may remain. If applying that ACL fails, the empty file is removed and no
+/// phrase material is persisted.
 fn persist_phrase(path: &Path, words: &[&'static str]) -> std::io::Result<()> {
     persist_phrase_with(path, words, restrict_secret_file, write_phrase_file)
 }
@@ -1330,7 +1331,18 @@ mod tests {
             .expect("icacls should inspect the phrase file");
         assert!(acl.status.success());
         let acl_text = String::from_utf8(acl.stdout).expect("icacls output should be UTF-8");
-        assert_eq!(acl_text.matches("(F)").count(), 1);
+        // `icacls /inheritancelevel:r` removes inherited ACEs, but Windows
+        // images may attach explicit SYSTEM or Administrators ACEs when the
+        // file is created. GitHub's Windows runner does so, whereas a normal
+        // local temp directory commonly leaves only the user ACE. The
+        // contract tested here is therefore that full control was granted and
+        // no inherited ACE survived. `acl_command_failures_are_fail_closed`
+        // separately proves that the grant passed to `icacls` is the current
+        // numerical SID and that a rejected grant fails closed.
+        assert!(
+            acl_text.contains("(F)"),
+            "ACL must grant full control: {acl_text}"
+        );
         assert!(
             !acl_text.contains("(I)"),
             "ACL must contain no inherited ACEs"
