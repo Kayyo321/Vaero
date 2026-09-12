@@ -1,0 +1,69 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  quality:
+    uses: ./.github/workflows/quality.yml
+
+  publish:
+    needs: quality
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Read and validate release version
+        id: version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          $versions = @($metadata.packages.version | Sort-Object -Unique)
+          if ($versions.Count -ne 1) { throw 'All workspace packages must use the canonical workspace version.' }
+          $version = $versions[0]
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must be X.X.X, got $version." }
+          $tag = "v$version"
+          git ls-remote --exit-code --tags origin "refs/tags/$tag" *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Tag $tag already exists." }
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists." }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+      - name: Restore optional signing certificate
+        shell: pwsh
+        env:
+          SIGNING_CERTIFICATE_BASE64: ${{ secrets.VAERO_SIGNING_CERTIFICATE_BASE64 }}
+        run: |
+          if ($env:SIGNING_CERTIFICATE_BASE64) {
+            $path = Join-Path $env:RUNNER_TEMP 'vaero-signing.pfx'
+            [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:SIGNING_CERTIFICATE_BASE64))
+            "VAERO_SIGN_CERTIFICATE=$path" >> $env:GITHUB_ENV
+          }
+      - name: Build artifacts and checksums
+        shell: pwsh
+        env:
+          VAERO_SIGN_PASSWORD: ${{ secrets.VAERO_SIGNING_CERTIFICATE_PASSWORD }}
+          SOURCE_DATE_EPOCH: ${{ github.event.repository.updated_at }}
+        run: ./scripts/package.ps1
+      - name: Create annotated version tag
+        shell: pwsh
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git tag -a '${{ steps.version.outputs.tag }}' -m 'Release ${{ steps.version.outputs.version }}'
+          git push origin '${{ steps.version.outputs.tag }}'
+      - name: Publish immutable GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = 'docs/release-notes/${{ steps.version.outputs.tag }}.md'
+          if (-not (Test-Path -LiteralPath $notes)) { throw "Missing release notes: $notes" }
+          gh release create '${{ steps.version.outputs.tag }}' artifacts/* --verify-tag --title 'Release ${{ steps.version.outputs.version }}' --notes-file $notes

@@ -1,0 +1,18 @@
+[package]
+name = "vaero-cli"
+description = "Windows-first command-line interface for Vaero"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "vaero"
+path = "src/main.rs"
+
+[dependencies]
+vaero-core = { version = "0.1.0", path = "../vaero-core" }
+
+[lints]
+workspace = true

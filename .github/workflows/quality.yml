@@ -1,0 +1,44 @@
+name: quality
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install pinned Rust toolchain
+        shell: pwsh
+        run: rustup show
+      - name: Install quality tools
+        shell: pwsh
+        run: |
+          cargo install --locked just cargo-llvm-cov cargo-deny cargo-audit
+      - name: Build debug workspace
+        run: cargo build --workspace --all-targets --locked
+      - name: Build release workspace
+        run: cargo build --workspace --all-targets --release --locked
+      - name: Run formatting, lint, tests, fuzz smoke, and coverage
+        run: just verify
+      - name: Run dependency and security policy
+        run: just audit
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: security-reports-${{ github.sha }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-${{ github.sha }}
+          path: target/coverage/
+          if-no-files-found: warn
+          retention-days: 30
