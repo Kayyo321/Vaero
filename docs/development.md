@@ -44,6 +44,16 @@ Create a short-lived branch from `devel`, open a reviewed pull request back to `
 
 Repository administrators should protect `devel` and `main`, require at least one approval and the `quality / verify` check, prohibit force-pushes and deletion, and restrict direct pushes to `main`.
 
+## Formats
+
+On-disk container formats are specified under `docs/formats/`. The Phase 1 encrypted container is `docs/formats/crypt-v1.md`; it is a draft and remains experimental until independent review. Code and format documents must change together.
+
+Known Phase 1 CLI limitations, tracked deliberately rather than worked around:
+
+- Interactive no-echo phrase entry is not implemented yet; `--phrase-file` and `--phrase-stdin` are the supported inputs, and the phrase is never accepted as a command-line argument value.
+- There is no overwrite flag; commands always refuse an existing destination.
+- Destination free-space estimation is not implemented yet.
+
 ## Coverage exclusions
 
 There are currently no coverage exclusions. Any future exclusion must be listed here with the exact module or path, affected lines, and a reviewed justification. Tests, generated files, unexercisable platform shims, and defensive aborts are not implicitly excluded.

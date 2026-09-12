@@ -2,7 +2,20 @@
 
 Vaero is a Windows-first, open-source command-line project for protecting directories and devices with memorable recovery phrases.
 
-> Vaero is pre-release software. Its encryption and archive formats are not yet implemented or independently reviewed. Do not use it to protect the only copy of data.
+> Vaero is pre-release software. Its encrypted container format is an experimental draft and has not been independently reviewed; its archive and compression formats are not yet implemented. Containers written today may be unreadable by later builds. Do not use Vaero to protect the only copy of data.
+
+## What works today (Phase 1, experimental)
+
+Single-file encryption with a generated recovery phrase, per the draft format in [docs/formats/crypt-v1.md](docs/formats/crypt-v1.md):
+
+```powershell
+vaero encrypt secrets.db --phrase-out phrase.txt   # writes secrets.db.crypt, phrase to a new file
+vaero inspect secrets.db.crypt                      # public header as JSON on stdout
+vaero verify  secrets.db.crypt --phrase-file phrase.txt
+vaero decrypt secrets.db.crypt --phrase-file phrase.txt
+```
+
+The phrase is the key: losing it means losing the data. Phrases are never accepted directly on the command line; interactively, the generated phrase is printed once to the terminal unless `--phrase-out` is given. On Windows, a phrase file is created with inheritance removed and access granted to the current user's SID before the phrase is written; Windows-managed explicit SYSTEM or Administrators entries may remain. This limits access by other ordinary accounts, but administrators, SYSTEM, and malware running as the same user can still read it.
 
 ## Quick start
 

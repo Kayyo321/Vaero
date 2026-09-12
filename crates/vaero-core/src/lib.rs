@@ -1,7 +1,22 @@
-//! Shared policy primitives for the Vaero command-line application.
+//! Shared policy and orchestration primitives for the Vaero command-line
+//! application.
+//!
+//! Besides pure policy checks such as [`validate_archive_path`], this crate
+//! provides the transactional `.crypt` file operations ([`encrypt_file`],
+//! [`decrypt_file`], [`verify_file`], [`inspect_file`]) defined by
+//! `docs/formats/crypt-v1.md` §6. It never prompts, never prints, and never
+//! writes anywhere except the explicitly requested destination and its
+//! temporary sibling.
 
 use std::fmt;
 use std::path::{Component, Path};
+
+mod container;
+
+pub use container::{Error, decrypt_file, encrypt_file, inspect_file, verify_file};
+pub use vaero_crypto::{
+    FormatError, KdfParams, Phrase, PhraseError, PhraseLength, PublicInfo, StreamSummary,
+};
 
 /// Current application version, sourced from the Cargo workspace.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -64,7 +79,7 @@ mod tests {
 
     #[test]
     fn version_is_workspace_version() {
-        assert_eq!(VERSION, "0.1.0");
+        assert_eq!(VERSION, "0.0.1");
     }
 
     #[test]
