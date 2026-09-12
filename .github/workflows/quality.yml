@@ -2,6 +2,8 @@ name: quality
 
 on:
   workflow_call:
+  pull_request:
+    branches: [devel, main]
 
 permissions:
   contents: read
