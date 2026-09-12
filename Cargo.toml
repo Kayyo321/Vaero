@@ -1,6 +1,13 @@
 [workspace]
-members = ["crates/vaero-cli", "crates/vaero-core"]
+members = ["crates/vaero-cli", "crates/vaero-core", "crates/vaero-crypto"]
 resolver = "2"
+
+[workspace.dependencies]
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+getrandom = "0.3"
+sha2 = { version = "0.10", default-features = false }
+zeroize = "1"
 
 [workspace.package]
 version = "0.1.0"

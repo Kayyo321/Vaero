@@ -8,7 +8,7 @@ Follow `AGENTS.md` as the canonical repository instructions. Before substantial 
 
 - Work from `devel`; `main` is stable/release-only.
 - Rust is pinned in `rust-toolchain.toml`; use `--workspace` and locked dependencies.
-- Current crates are `crates/vaero-cli` and `crates/vaero-core`.
+- Current crates are `crates/vaero-cli`, `crates/vaero-core`, and `crates/vaero-crypto`.
 - `vaero-core` contains reusable policy and orchestration and must not prompt or perform hidden writes.
 - Human CLI output goes to stderr; versioned machine output goes to stdout.
 - Windows x86_64 is authoritative for path, metadata, packaging, and future device behavior.
