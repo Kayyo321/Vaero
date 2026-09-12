@@ -9,7 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 getrandom.workspace = true
-vaero-crypto = { version = "0.1.0", path = "../vaero-crypto" }
+vaero-crypto = { version = "0.0.1", path = "../vaero-crypto" }
 
 [lints]
 workspace = true

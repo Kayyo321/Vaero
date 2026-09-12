@@ -195,7 +195,12 @@ vaero --help | --version
 - The generated phrase is printed once, numbered, to stderr only when stderr
   is a terminal; otherwise `--phrase-out <new file>` is required and the
   command fails without it rather than writing the phrase to a redirected
-  stream. Interactive no-echo phrase entry is deferred; `--phrase-file` and
+  stream. On Windows, Vaero creates that phrase file empty, removes inherited
+  DACL entries, grants full access only to the current user's numerical SID,
+  and only then writes the phrase. ACL setup failure removes the empty file and
+  discards the encrypted output. This protects against other ordinary local
+  accounts, not administrators who take ownership or code running as the same
+  user. Interactive no-echo phrase entry is deferred; `--phrase-file` and
   `--phrase-stdin` are the Phase 1 inputs, and a bare `--phrase <value>`
   option deliberately does not exist.
 - Human status goes to stderr. `inspect` writes versioned JSON to stdout:

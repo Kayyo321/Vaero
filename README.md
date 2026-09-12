@@ -15,7 +15,7 @@ vaero verify  secrets.db.crypt --phrase-file phrase.txt
 vaero decrypt secrets.db.crypt --phrase-file phrase.txt
 ```
 
-The phrase is the key: losing it means losing the data. Phrases are never accepted directly on the command line; interactively, the generated phrase is printed once to the terminal unless `--phrase-out` is given.
+The phrase is the key: losing it means losing the data. Phrases are never accepted directly on the command line; interactively, the generated phrase is printed once to the terminal unless `--phrase-out` is given. On Windows, a phrase file is created with inheritance removed and access granted only to the current user's SID before the phrase is written. This limits access by other ordinary accounts, but administrators can take ownership and malware running as the same user can still read it.
 
 ## Quick start
 

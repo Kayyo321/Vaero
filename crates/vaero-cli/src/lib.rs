@@ -12,7 +12,9 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fmt::Write as _;
 use std::fs::{self, File};
+use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 
 use vaero_core::{KdfParams, Phrase, PhraseLength, PublicInfo};
 
@@ -607,9 +609,97 @@ fn read_phrase_text(source: &PhraseSource) -> std::io::Result<String> {
 }
 
 /// Write the recovery phrase to a new file that must not already exist.
+///
+/// On Windows, the file is created empty and its inherited DACL entries are
+/// removed before any phrase bytes are written. Only the current user's SID
+/// is then granted full access. If applying that ACL fails, the empty file is
+/// removed and no phrase material is persisted.
 fn persist_phrase(path: &Path, words: &[&'static str]) -> std::io::Result<()> {
+    persist_phrase_with(path, words, restrict_secret_file, write_phrase_file)
+}
+
+fn persist_phrase_with(
+    path: &Path,
+    words: &[&'static str],
+    restrict: fn(&Path) -> io::Result<()>,
+    write: fn(&mut File, &[&'static str]) -> io::Result<()>,
+) -> io::Result<()> {
     let mut file = File::create_new(path)?;
-    write_phrase(&mut file, words)
+    if let Err(error) = restrict(path) {
+        drop(file);
+        let _removed = fs::remove_file(path);
+        return Err(error);
+    }
+    if let Err(error) = write(&mut file, words) {
+        drop(file);
+        let _removed = fs::remove_file(path);
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// Restrict a secret file's DACL to the current Windows user's SID.
+fn restrict_secret_file(path: &Path) -> io::Result<()> {
+    restrict_secret_file_with(
+        path,
+        || {
+            ProcessCommand::new("whoami")
+                .args(["/user", "/fo", "csv", "/nh"])
+                .output()
+                .map(|output| (output.status.success(), output.stdout))
+        },
+        |path, grant| {
+            ProcessCommand::new("icacls")
+                .arg(path)
+                .args(["/inheritancelevel:r", "/grant:r"])
+                .arg(grant)
+                .arg("/Q")
+                .output()
+                .map(|output| output.status.success())
+        },
+    )
+}
+
+fn restrict_secret_file_with(
+    path: &Path,
+    whoami: fn() -> io::Result<(bool, Vec<u8>)>,
+    apply_acl: fn(&Path, &str) -> io::Result<bool>,
+) -> io::Result<()> {
+    let (whoami_succeeded, stdout) = whoami()?;
+    if !whoami_succeeded {
+        return Err(io::Error::other("failed to determine the current user SID"));
+    }
+    let sid = parse_user_sid(&stdout)?;
+    let grant = format!("*{sid}:F");
+    if !apply_acl(path, &grant)? {
+        return Err(io::Error::other(
+            "failed to restrict the secret file to the current user",
+        ));
+    }
+    Ok(())
+}
+
+fn write_phrase_file(file: &mut File, words: &[&'static str]) -> io::Result<()> {
+    write_phrase(file, words)
+}
+
+/// Parse the final CSV field emitted by `whoami /user` as a numerical SID.
+fn parse_user_sid(stdout: &[u8]) -> io::Result<&str> {
+    let text = std::str::from_utf8(stdout)
+        .map_err(|_| io::Error::other("whoami returned non-UTF-8 output"))?;
+    let sid = text
+        .trim()
+        .rsplit_once(',')
+        .map(|(_, field)| field.trim().trim_matches('"'))
+        .ok_or_else(|| io::Error::other("whoami returned an invalid SID record"))?;
+    if !sid.starts_with("S-")
+        || !sid[2..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err(io::Error::other("whoami returned an invalid SID"));
+    }
+    Ok(sid)
 }
 
 /// Write phrase words space-separated with a trailing newline.
@@ -1234,6 +1324,18 @@ mod tests {
         persist_phrase(&fresh, &["alpha", "beta"]).expect("new file should be written");
         assert_eq!(fs::read(&fresh).unwrap(), b"alpha beta\n");
 
+        let acl = ProcessCommand::new("icacls")
+            .arg(&fresh)
+            .output()
+            .expect("icacls should inspect the phrase file");
+        assert!(acl.status.success());
+        let acl_text = String::from_utf8(acl.stdout).expect("icacls output should be UTF-8");
+        assert_eq!(acl_text.matches("(F)").count(), 1);
+        assert!(
+            !acl_text.contains("(I)"),
+            "ACL must contain no inherited ACEs"
+        );
+
         let error =
             persist_phrase(&fresh, &["alpha", "beta"]).expect_err("existing file must be refused");
         assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
@@ -1242,6 +1344,127 @@ mod tests {
             b"alpha beta\n",
             "content preserved"
         );
+    }
+
+    #[test]
+    fn user_sid_parser_rejects_untrusted_command_output() {
+        assert_eq!(
+            parse_user_sid(b"account,S-1-5-21-123\r\n").unwrap(),
+            "S-1-5-21-123"
+        );
+        assert_eq!(
+            parse_user_sid(b"\"DOMAIN\\user\",\"S-1-5-21-456\"\r\n").unwrap(),
+            "S-1-5-21-456"
+        );
+        for invalid in [
+            b"not utf8: \xff".as_slice(),
+            b"missing-comma".as_slice(),
+            b"account,not-a-sid".as_slice(),
+            b"account,S-1-5-x".as_slice(),
+        ] {
+            assert!(parse_user_sid(invalid).is_err());
+        }
+    }
+
+    #[test]
+    #[allow(clippy::unnecessary_wraps)]
+    fn secret_file_setup_failures_leave_no_file_or_phrase() {
+        fn fail_restrict(_: &Path) -> io::Result<()> {
+            Err(io::Error::other("injected ACL failure"))
+        }
+        fn allow_restrict(_: &Path) -> io::Result<()> {
+            Ok(())
+        }
+        fn fail_write(_: &mut File, _: &[&'static str]) -> io::Result<()> {
+            Err(io::Error::other("injected phrase write failure"))
+        }
+        let dir = TempDir::new("secret-file-failures");
+        let acl_failure = dir.file("acl-failure.txt");
+        let error = persist_phrase_with(
+            &acl_failure,
+            &["secret"],
+            fail_restrict as fn(&Path) -> io::Result<()>,
+            fail_write as fn(&mut File, &[&'static str]) -> io::Result<()>,
+        )
+        .expect_err("ACL failure must fail closed");
+        assert_eq!(error.to_string(), "injected ACL failure");
+        assert!(!acl_failure.exists());
+
+        let write_failure = dir.file("write-failure.txt");
+        let error = persist_phrase_with(
+            &write_failure,
+            &["secret"],
+            allow_restrict as fn(&Path) -> io::Result<()>,
+            fail_write as fn(&mut File, &[&'static str]) -> io::Result<()>,
+        )
+        .expect_err("write failure must remove the protected partial file");
+        assert_eq!(error.to_string(), "injected phrase write failure");
+        assert!(!write_failure.exists());
+    }
+
+    #[test]
+    #[allow(clippy::unnecessary_wraps)]
+    fn acl_command_failures_are_fail_closed() {
+        type Whoami = fn() -> io::Result<(bool, Vec<u8>)>;
+        type ApplyAcl = fn(&Path, &str) -> io::Result<bool>;
+
+        fn whoami_error() -> io::Result<(bool, Vec<u8>)> {
+            Err(io::Error::other("injected whoami failure"))
+        }
+        fn whoami_failed() -> io::Result<(bool, Vec<u8>)> {
+            Ok((false, Vec::new()))
+        }
+        fn whoami_invalid() -> io::Result<(bool, Vec<u8>)> {
+            Ok((true, b"invalid".to_vec()))
+        }
+        fn whoami_valid() -> io::Result<(bool, Vec<u8>)> {
+            Ok((true, b"account,S-1-5-21-123".to_vec()))
+        }
+        fn acl_error(_: &Path, _: &str) -> io::Result<bool> {
+            Err(io::Error::other("injected icacls failure"))
+        }
+        fn acl_failed(_: &Path, grant: &str) -> io::Result<bool> {
+            assert_eq!(grant, "*S-1-5-21-123:F");
+            Ok(false)
+        }
+        fn acl_succeeded(_: &Path, grant: &str) -> io::Result<bool> {
+            assert_eq!(grant, "*S-1-5-21-123:F");
+            Ok(true)
+        }
+
+        let path = Path::new("unused-secret-path");
+        for (whoami, acl, expected) in [
+            (
+                whoami_error as Whoami,
+                acl_succeeded as ApplyAcl,
+                "injected whoami failure",
+            ),
+            (
+                whoami_failed as Whoami,
+                acl_succeeded as ApplyAcl,
+                "failed to determine the current user SID",
+            ),
+            (
+                whoami_invalid as Whoami,
+                acl_succeeded as ApplyAcl,
+                "whoami returned an invalid SID record",
+            ),
+            (
+                whoami_valid as Whoami,
+                acl_error as ApplyAcl,
+                "injected icacls failure",
+            ),
+            (
+                whoami_valid as Whoami,
+                acl_failed as ApplyAcl,
+                "failed to restrict the secret file to the current user",
+            ),
+        ] {
+            let error = restrict_secret_file_with(path, whoami, acl).unwrap_err();
+            assert_eq!(error.to_string(), expected);
+        }
+        restrict_secret_file_with(path, whoami_valid as Whoami, acl_succeeded as ApplyAcl)
+            .expect("valid ACL command results should succeed");
     }
 
     #[test]
